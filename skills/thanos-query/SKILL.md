@@ -1,6 +1,13 @@
 ---
 name: thanos-query
-description: Query Thanos HTTP API for cross-region Prometheus metrics via PromQL. Use when running PromQL/MetricsQL queries against a Thanos Querier or Query Frontend, discovering metrics/labels across regions, inspecting Thanos stores (sidecars/store-gateway), checking alerts/rules, or analyzing time series data that spans multiple Prometheus instances. Triggers on: thanos query, promql, cross-region metrics, p50/p95/p99 latency, sidecar status, store-gateway, query frontend, label discovery across regions.
+description: >-
+  Query Thanos HTTP API for cross-region Prometheus metrics via PromQL. Use when
+  running PromQL/MetricsQL queries against a Thanos Querier or Query Frontend,
+  discovering metrics/labels across regions, inspecting Thanos stores
+  (sidecars/store-gateway), checking alerts/rules, or analyzing time series data
+  that spans multiple Prometheus instances. Triggers on: thanos query, promql,
+  cross-region metrics, p50/p95/p99 latency, sidecar status, store-gateway,
+  query frontend, label discovery across regions.
 ---
 
 # Thanos Query
