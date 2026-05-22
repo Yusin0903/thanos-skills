@@ -4,10 +4,12 @@ description: >-
   Query Thanos HTTP API for cross-region Prometheus metrics via PromQL. Use when
   running PromQL/MetricsQL queries against a Thanos Querier or Query Frontend,
   discovering metrics/labels across regions, inspecting Thanos stores
-  (sidecars/store-gateway), checking alerts/rules, or analyzing time series data
-  that spans multiple Prometheus instances. Triggers on: thanos query, promql,
-  cross-region metrics, p50/p95/p99 latency, sidecar status, store-gateway,
-  query frontend, label discovery across regions.
+  (sidecars/store-gateway), checking alerts/rules, troubleshooting empty query
+  results, or analyzing time series data that spans multiple Prometheus
+  instances. Triggers on: thanos query, promql, cross-region metrics,
+  p50/p95/p99 latency, sidecar status, store-gateway, query frontend, label
+  discovery across regions, empty results, missing data, data delay, no data
+  found, query returns empty.
 ---
 
 # Thanos Query
@@ -175,6 +177,92 @@ curl -s ${THANOS_AUTH_HEADER:+-H} ${THANOS_AUTH_HEADER:+"$THANOS_AUTH_HEADER"} \
   --data-urlencode 'query=histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, region))' \
   "$THANOS_METRICS_URL/api/v1/query" | jq '.data.result'
 ```
+
+## Troubleshooting: empty query results
+
+When an instant query or `rate()` query returns `[]`, **do NOT** iteratively widen the time window in small steps (5m → 10m → 30m → 1h). That wastes time and obscures the real cause. Follow this checklist instead:
+
+```
+Empty result triage:
+- [ ] Step 1: Check stores topology — is there a sidecar for that region?
+- [ ] Step 2: Verify the metric name exists at all
+- [ ] Step 3: Verify the label value (label names vary across deployments)
+- [ ] Step 4: Run a wide range query (6h+) to find the last data point
+- [ ] Step 5: Only narrow down once you have an upper bound on the gap
+```
+
+### Step 1 — Stores topology first (architecture matters)
+
+Before assuming the query is wrong, check what backs each region:
+
+```bash
+curl -s ${THANOS_AUTH_HEADER:+-H} ${THANOS_AUTH_HEADER:+"$THANOS_AUTH_HEADER"} \
+  "$THANOS_METRICS_URL/api/v1/stores" \
+  | jq '.data | to_entries[] | .key as $k | .value[] | {kind:$k, name, lastError, labelSets}'
+```
+
+Interpret the result:
+
+| What you see for that region | What it means |
+|---|---|
+| Has a `sidecar` entry, `lastError: null` | Real-time data available — empty result is a query problem |
+| Has a `sidecar` entry, `lastError` populated | Sidecar is broken — that's your answer |
+| Only `store` (store-gateway), no `sidecar` | **Historical data only.** Expect ~2h upload delay. `rate()` over last 5m will almost always be empty. |
+| Neither sidecar nor store for that region | Region not wired into this Thanos — query the right Querier |
+
+**This single check resolves most "empty result" mysteries.** Do it before anything else.
+
+### Step 2 — Does the metric exist?
+
+```bash
+curl -s ${THANOS_AUTH_HEADER:+-H} ${THANOS_AUTH_HEADER:+"$THANOS_AUTH_HEADER"} \
+  --data-urlencode 'match[]={__name__=~".*duration.*bucket"}' \
+  "$THANOS_METRICS_URL/api/v1/series?limit=5" \
+  | jq '[.data[] | .__name__] | unique'
+```
+
+If the metric name is wrong (e.g. `http_request_duration_seconds_bucket` vs `api_request_duration_milliseconds_bucket`), nothing else matters. Confirm the actual name first.
+
+### Step 3 — Do the label values match?
+
+Don't assume `environment="stg"` is the right scope. Inspect actual labels on the metric:
+
+```bash
+curl -s ${THANOS_AUTH_HEADER:+-H} ${THANOS_AUTH_HEADER:+"$THANOS_AUTH_HEADER"} \
+  --data-urlencode 'match[]={__name__="<metric_name>"}' \
+  "$THANOS_METRICS_URL/api/v1/series?limit=1" | jq '.data[0]'
+```
+
+Look for `region`, `thanos_region`, `cluster`, `environment` — different deployments scope differently.
+
+### Step 4 — Wide range query to find the gap
+
+Once topology and naming are confirmed, find the **last data point** with one wide query, not many narrow ones:
+
+```bash
+# 6 hours is the default — go wider if needed. NEVER start with 30 minutes.
+NOW=$(date -u +%s)
+curl -s ${THANOS_AUTH_HEADER:+-H} ${THANOS_AUTH_HEADER:+"$THANOS_AUTH_HEADER"} \
+  --data-urlencode 'query=count(<metric>{<labels>})' \
+  --data-urlencode "start=$(( NOW - 21600 ))" \
+  --data-urlencode "end=$NOW" \
+  --data-urlencode 'step=1m' \
+  "$THANOS_METRICS_URL/api/v1/query_range" \
+  | jq '.data.result[0].values | .[-5:] | map({time: (.[0] | todate), count: .[1]})'
+```
+
+If still empty, double the window (12h, 24h, 3d). Cheap operation — go wide and bisect, don't crawl forward.
+
+### Step 5 — Now narrow down
+
+Only after you know roughly when data stopped, query the surrounding window with `step=1m` to pinpoint the exact cutoff.
+
+### Anti-patterns
+
+- ❌ Repeatedly retrying `rate(...[5m])` with no data — `rate()` needs ≥2 samples in the window; if scrape stopped, no time window will help.
+- ❌ Iteratively expanding `[5m] → [10m] → [30m]` hoping data appears.
+- ❌ Querying `/api/v1/query` (instant) after `/api/v1/query_range` showed data — staleness markers may hide instant results even when range queries succeed.
+- ❌ Assuming the metric/label is wrong before checking `/api/v1/stores`.
 
 ## Notes
 
