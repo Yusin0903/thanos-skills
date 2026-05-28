@@ -1,12 +1,73 @@
 # thanos-skills
 
-Claude Code skills for [Thanos](https://thanos.io) — query metrics across multiple Prometheus instances with PromQL.
+Claude Code skills for [CNCF Thanos](https://thanos.io), Prometheus, PromQL, Kubernetes observability, and SRE workflows.
+
+Use this repo when you want Claude Code to query a Thanos Querier / Query Frontend directly, inspect cross-region Prometheus metrics, discover labels and stores, debug empty PromQL results, or investigate alerts without hand-writing every curl command.
+
+**Search keywords:** Claude Code skill, Claude skills, Thanos skill, Prometheus skill, PromQL, Thanos Querier, query frontend, store gateway, observability, Kubernetes, CNCF, SRE.
 
 ## Available Skills
 
 | Skill | Purpose |
 |-------|---------|
 | [thanos-query](./skills/thanos-query) | Query Thanos HTTP API: instant/range queries, label/series discovery, stores topology, alerts, rules |
+
+## What it helps Claude do
+
+- Query metrics across multiple Prometheus instances through Thanos.
+- Compare latency, error rate, availability, and saturation across regions or clusters.
+- Discover label names, label values, metric names, and connected Thanos stores.
+- Diagnose empty query results caused by missing stores, upload delay, label mismatch, or stale data.
+- Inspect active alerts, rules, build info, runtime info, flags, and TSDB/cardinality status.
+
+## Installation
+
+### Via [skills.sh](https://skills.sh)
+
+```bash
+npx skills add Yusin0903/thanos-skills
+```
+
+Install only the Thanos query skill:
+
+```bash
+npx skills add Yusin0903/thanos-skills --skill thanos-query
+```
+
+### Via git clone
+
+```bash
+git clone https://github.com/Yusin0903/thanos-skills.git ~/Projects/thanos-skills
+ln -s ~/Projects/thanos-skills/skills/thanos-query ~/.claude/skills/thanos-query
+```
+
+## Usage
+
+Example prompts that trigger the skill:
+
+- "What's the P99 latency for service X across all regions?"
+- "Show me which stores are connected to Thanos."
+- "Discover all label values for `region` in the last 24h."
+- "Why does this Thanos query return empty results?"
+- "List active alerts from Thanos Ruler."
+- "Compare 5xx error rate by Kubernetes cluster."
+- "Find whether this metric exists in the store gateway or only in sidecars."
+
+## GitHub discovery
+
+Recommended repository topics:
+
+```text
+claude-code
+claude-skills
+thanos
+prometheus
+promql
+observability
+kubernetes
+cncf
+sre
+```
 
 ## Prerequisites
 
@@ -39,38 +100,7 @@ If this fails, you will hit one of these failure modes when the skill runs:
 | `401 Unauthorized` / `403 Forbidden` | Reverse proxy in front; `THANOS_AUTH_HEADER` missing or wrong |
 | `404 Not Found` on `/-/healthy` | URL points at a non-Thanos endpoint (e.g. Grafana, nginx default page) |
 | `SSL certificate verify failed` / `curl: (35)` | Reverse proxy uses self-signed cert; verify CA bundle or use a trusted cert |
-| HTTP 200 but empty `/api/v1/stores` | Connected to Thanos Querier with no stores wired in — wrong cluster/environment |
-
-## Installation
-
-### Via [skills.sh](https://skills.sh)
-
-```
-npx skills add Yusin0903/thanos-skills
-```
-
-Install a specific skill:
-
-```
-npx skills add Yusin0903/thanos-skills --skill thanos-query
-```
-
-### Via git clone
-
-```
-git clone https://github.com/Yusin0903/thanos-skills.git ~/Projects/thanos-skills
-ln -s ~/Projects/thanos-skills/skills/thanos-query ~/.claude/skills/thanos-query
-```
-
-## Usage
-
-**Example prompts that trigger the skill:**
-
-- "What's the P99 latency for service X across all regions?"
-- "Show me which stores are connected to Thanos"
-- "Discover all label values for `region` in the last 24h"
-- "Why does this query return empty results?"
-- "List active alerts from Thanos Ruler"
+| HTTP 200 but empty `/api/v1/stores` | Connected to a Thanos Querier with no stores wired in — wrong cluster/environment |
 
 ## Environment Variables
 
@@ -119,4 +149,3 @@ Do not expose Thanos Query to the public internet.
 - Skills execute `curl` from your local machine (or wherever Claude Code is running)
 - Query responses (including all metric labels) are returned to Claude's context
 - That context is processed by Anthropic's API — if your labels contain confidential data (internal hostnames, infrastructure CIDRs, customer identifiers), treat skill output as information shared with Claude
-
