@@ -37,15 +37,14 @@ You ask in plain language ("P99 latency for checkout across all regions, last ho
 ## What a session looks like
 
 ```text
-You:   What's the P99 latency for the checkout service across all regions in the last hour?
+You:    What's the P99 latency for the checkout service across all regions in the last hour?
 
 Claude: → checks /api/v1/labels to confirm the metric and `region` label exist
         → runs:
             histogram_quantile(0.99,
               sum by (le, region) (
-                rate(http_request_duration_seconds_bucket{service="checkout"}[5m])
-              ))
-        → returns a per-region breakdown and flags us-west-2 as the outlier (412 ms vs ~180 ms)
+                rate(http_request_duration_seconds_bucket{service="checkout"}[5m])))
+        → returns a per-region breakdown and flags us-west-2 as the outlier (412ms vs ~180ms)
 ```
 
 More prompts that trigger the skill:
@@ -84,34 +83,40 @@ ln -s ~/Projects/thanos-skills/skills/thanos-query ~/.claude/skills/thanos-query
 
 ## Connecting to Thanos
 
-The skill runs `curl` from wherever Claude Code is running (your laptop, a dev container, a CI runner). That machine must be able to reach the Thanos Querier HTTP endpoint.
+The skill runs `curl` from wherever Claude Code runs (your laptop, a dev container, a CI runner). That machine just needs to reach the Thanos Querier HTTP endpoint. Pick whichever path matches your deployment — they all end with a reachable `THANOS_METRICS_URL`:
 
-| Deployment | How to reach it |
-|------------|-----------------|
-| Local dev / docker-compose | `THANOS_METRICS_URL=http://localhost:10902` |
-| EKS / GKE internal Service | `kubectl port-forward -n <ns> svc/thanos-query 10902:10902` → `http://localhost:10902` |
-| Internal NLB / ALB | Connect to VPN or VPC peering first, then use the LB hostname |
-| Behind reverse proxy | Use the public hostname + set `THANOS_AUTH_HEADER` |
+| Deployment | How to reach it | `THANOS_METRICS_URL` |
+|------------|-----------------|----------------------|
+| Local dev / docker-compose | Querier on localhost | `http://localhost:10902` |
+| Internal NLB / ALB | Connect VPN or VPC peering, then use the LB hostname | `http://<lb-host>:10902` |
+| EKS / GKE internal Service | `kubectl port-forward -n <ns> svc/thanos-query 10902:10902` (keep it running) | `http://localhost:10902` |
+| Behind a reverse proxy | Use the public hostname + set `THANOS_AUTH_HEADER` | `https://<proxy-host>` |
 
-### Verify connectivity first
+### Verify connectivity
 
 ```bash
+# 1) is the endpoint a healthy Thanos?
 curl -sS ${THANOS_AUTH_HEADER:+-H} ${THANOS_AUTH_HEADER:+"$THANOS_AUTH_HEADER"} \
   "$THANOS_METRICS_URL/-/healthy"
 # expected: OK
+
+# 2) does a trivial query return data?
+curl -sS ${THANOS_AUTH_HEADER:+-H} ${THANOS_AUTH_HEADER:+"$THANOS_AUTH_HEADER"} \
+  "$THANOS_METRICS_URL/api/v1/query?query=up" | jq '.data.result | length'
+# expected: a number > 0
 ```
 
-If this fails, you'll hit one of these when the skill runs:
+If something's off, you'll hit one of these:
 
 | Symptom | Likely cause |
 |---------|--------------|
 | `Could not resolve host` | DNS — VPN not connected, or internal hostname not resolvable from your machine |
-| `Connection refused` | Wrong port, or port-forward not running |
+| `Connection refused` | Wrong port, or (if using port-forward) the forward isn't running |
 | `Connection timed out` | Network path blocked — Security Group, firewall, or no VPC route |
 | `401 Unauthorized` / `403 Forbidden` | Reverse proxy in front; `THANOS_AUTH_HEADER` missing or wrong |
 | `404 Not Found` on `/-/healthy` | URL points at a non-Thanos endpoint (e.g. Grafana, nginx default page) |
 | `SSL certificate verify failed` / `curl: (35)` | Reverse proxy uses a self-signed cert; verify the CA bundle or use a trusted cert |
-| HTTP 200 but empty `/api/v1/stores` | Connected to a Querier with no stores wired in — wrong cluster/environment |
+| HTTP 200 but `/api/v1/stores` is empty | Connected to a Querier with no stores wired in — wrong cluster/environment |
 
 ## Environment variables
 
@@ -120,6 +125,19 @@ THANOS_METRICS_URL    # Thanos Querier endpoint (e.g. http://localhost:10902)
 THANOS_AUTH_HEADER    # Full HTTP header line, e.g. "Authorization: Bearer <token>"
                       # Leave empty for direct access; set it when behind an auth proxy.
 ```
+
+Set them in your shell, or — if you drive the skill from Claude Code — in `~/.claude/settings.json` so they load on every session:
+
+```json
+{
+  "env": {
+    "THANOS_METRICS_URL": "http://localhost:10902",
+    "THANOS_AUTH_HEADER": ""
+  }
+}
+```
+
+`THANOS_AUTH_HEADER` must be the **full header line** (`Authorization: Bearer <token>`), not just `Bearer <token>` — it's passed straight into `curl -H "$THANOS_AUTH_HEADER"`.
 
 ## Security
 
